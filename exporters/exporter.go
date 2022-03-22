@@ -238,6 +238,13 @@ func NewExporter(name, prefix, cloud string, disabledMetrics []string, endpointT
 				return nil, err
 			}
 		}
+        case "network-router":
+                {
+                        exporter, err = NewNeutronRouterExporter(&exporterConfig)
+                        if err != nil {
+                                return nil, err
+                        }
+                }
 	case "compute":
 		{
 			exporter, err = NewNovaExporter(&exporterConfig)

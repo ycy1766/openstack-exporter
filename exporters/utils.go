@@ -150,6 +150,8 @@ func NewServiceClient(service string, opts *clientconfig.ClientOpts, transport *
 		return openstack.NewNetworkV2(pClient, eo)
         case "network-port":
                 return openstack.NewNetworkV2(pClient, eo)
+        case "network-router":
+                return openstack.NewNetworkV2(pClient, eo)
 	case "object-store":
 		return openstack.NewObjectStorageV1(pClient, eo)
 	case "orchestration":
