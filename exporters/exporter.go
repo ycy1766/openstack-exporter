@@ -266,6 +266,14 @@ func NewExporter(name, prefix, cloud string, disabledMetrics []string, endpointT
 				return nil, err
 			}
 		}
+
+        case "compute-base":
+                {
+                        exporter, err = NewNovaBaseExporter(&exporterConfig)
+                        if err != nil {
+                                return nil, err
+                        }
+                }
         case "compute-limit":
                 {
                         exporter, err = NewNovaLimitExporter(&exporterConfig)

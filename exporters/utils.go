@@ -118,6 +118,8 @@ func NewServiceClient(service string, opts *clientconfig.ClientOpts, transport *
 		return openstack.NewClusteringV1(pClient, eo)
 	case "compute":
 		return openstack.NewComputeV2(pClient, eo)
+        case "compute-base":
+                return openstack.NewComputeV2(pClient, eo)
         case "compute-limit":
                 return openstack.NewComputeV2(pClient, eo)
 	case "compute-total-vms":
