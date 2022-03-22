@@ -231,6 +231,13 @@ func NewExporter(name, prefix, cloud string, disabledMetrics []string, endpointT
 				return nil, err
 			}
 		}
+        case "network-base":
+                {
+                        exporter, err = NewNeutronBaseExporter(&exporterConfig)
+                        if err != nil {
+                                return nil, err
+                        }
+                }
 	case "network-port":
 		{
 			exporter, err = NewNeutronPortExporter(&exporterConfig)

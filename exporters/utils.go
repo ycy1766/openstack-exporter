@@ -148,6 +148,8 @@ func NewServiceClient(service string, opts *clientconfig.ClientOpts, transport *
 		return openstack.NewLoadBalancerV2(pClient, eo)
 	case "network":
 		return openstack.NewNetworkV2(pClient, eo)
+	case "network-base":
+		return openstack.NewNetworkV2(pClient, eo)
         case "network-port":
                 return openstack.NewNetworkV2(pClient, eo)
         case "network-router":
