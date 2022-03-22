@@ -266,6 +266,13 @@ func NewExporter(name, prefix, cloud string, disabledMetrics []string, endpointT
 				return nil, err
 			}
 		}
+	case "compute-total-vms":
+		{
+			exporter, err = NewNovaTotalVmsExporter(&exporterConfig)
+			if err != nil {
+				return nil, err
+			}
+		}
 	case "image":
 		{
 			exporter, err = NewGlanceExporter(&exporterConfig)
