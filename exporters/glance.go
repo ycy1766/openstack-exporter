@@ -1,11 +1,11 @@
 package exporters
 
 import (
+	"context"
+	"log/slog"
 	"strconv"
 
-	"log/slog"
-
-	"github.com/gophercloud/gophercloud/openstack/imageservice/v2/images"
+	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -15,8 +15,10 @@ type GlanceExporter struct {
 
 var defaultGlanceMetrics = []Metric{
 	{Name: "images", Fn: ListImages},
-	{Name: "image_bytes", Labels: []string{"id", "name", "tenant_id"}, Fn: ListImageProperties, Slow: true},
-	{Name: "image_created_at", Labels: []string{"id", "name", "tenant_id", "visibility", "hidden", "status"}, Slow: true},
+	{Name: "image_bytes", Labels: []string{"id", "name", "tenant_id", "image_type"},
+		Fn: ListImageProperties, Slow: true},
+	{Name: "image_created_at", Labels: []string{"id", "name", "tenant_id", "visibility",
+		"hidden", "status", "image_type"}, Slow: true},
 }
 
 func NewGlanceExporter(config *ExporterConfig, logger *slog.Logger) (*GlanceExporter, error) {
@@ -40,23 +42,24 @@ func NewGlanceExporter(config *ExporterConfig, logger *slog.Logger) (*GlanceExpo
 	return &exporter, nil
 }
 
-func getAllImages(exporter *BaseOpenStackExporter) ([]images.Image, error) {
+func getAllImages(ctx context.Context, exporter *BaseOpenStackExporter) ([]images.Image, error) {
 	var allImages []images.Image
 
-	allPagesImage, err := images.List(exporter.Client, images.ListOpts{}).AllPages()
+	allPagesImage, err := images.List(exporter.ClientV2, images.ListOpts{}).AllPages(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	if allImages, err = images.ExtractImages(allPagesImage); err != nil {
+	allImages, err = images.ExtractImages(allPagesImage)
+	if err != nil {
 		return nil, err
 	}
 
 	return allImages, nil
 }
 
-func ListImages(exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) error {
-	allImages, err := getAllImages(exporter)
+func ListImages(ctx context.Context, exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) error {
+	allImages, err := getAllImages(ctx, exporter)
 	if err != nil {
 		return err
 	}
@@ -67,22 +70,35 @@ func ListImages(exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) er
 	return nil
 }
 
-func ListImageProperties(exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) error {
+func ListImageProperties(ctx context.Context, exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) error {
 	// Image size and created at metrics
-	allImages, err := getAllImages(exporter)
+	allImages, err := getAllImages(ctx, exporter)
 	if err != nil {
 		return err
 	}
 
 	for _, image := range allImages {
+		imageType := getImageType(&image)
 		ch <- prometheus.MustNewConstMetric(exporter.Metrics["image_bytes"].Metric,
 			prometheus.GaugeValue, float64(image.SizeBytes), image.ID, image.Name,
-			image.Owner)
+			image.Owner, imageType)
 		ch <- prometheus.MustNewConstMetric(exporter.Metrics["image_created_at"].Metric,
 			prometheus.GaugeValue, float64(image.CreatedAt.Unix()), image.ID, image.Name,
-			image.Owner, string(image.Visibility), strconv.FormatBool(image.Hidden), string(image.Status))
+			image.Owner, string(image.Visibility), strconv.FormatBool(image.Hidden), string(image.Status),
+			imageType)
 
 	}
 
 	return nil
+}
+
+// getImageType returns the "image_type" image property set by nova, e.g.
+// "snapshot" for server snapshots or "backup" for server backups. Images
+// uploaded directly to glance do not carry this property and are reported
+// as "image".
+func getImageType(image *images.Image) string {
+	if imageType, ok := image.Properties["image_type"].(string); ok && imageType != "" {
+		return imageType
+	}
+	return "image"
 }
