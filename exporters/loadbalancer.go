@@ -93,6 +93,30 @@ func NewLoadbalancerExporter(config *ExporterConfig, logger *slog.Logger) (*Load
 	return &exporter, nil
 }
 
+var (
+	loadbalancerStatsMetrics = []string{"stats_bytes_in", "stats_bytes_out", "stats_active_connections", "stats_total_connections", "stats_request_errors"}
+	listenerStatsMetrics     = []string{"listener_stats_bytes_in", "listener_stats_bytes_out", "listener_stats_active_connections", "listener_stats_total_connections", "listener_stats_request_errors"}
+)
+
+// hasAnyMetric reports whether at least one of the named metrics is enabled.
+func hasAnyMetric(exporter *BaseOpenStackExporter, names []string) bool {
+	for _, name := range names {
+		if _, ok := exporter.Metrics[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// emitStatMetric sends a stats gauge only when that metric is enabled, so that
+// disabling a single metric (e.g. loadbalancer-stats_bytes_out) does not
+// dereference a missing entry while its siblings stay enabled.
+func emitStatMetric(exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric, name string, value int, labelValues []string) {
+	if metric, ok := exporter.Metrics[name]; ok {
+		ch <- prometheus.MustNewConstMetric(metric.Metric, prometheus.GaugeValue, float64(value), labelValues...)
+	}
+}
+
 func ListAllLoadbalancers(ctx context.Context, exporter *BaseOpenStackExporter, ch chan<- prometheus.Metric) error {
 	var allLoadbalancers []loadbalancers.LoadBalancer
 	allPagesLoadbalancers, err := loadbalancers.List(exporter.ClientV2, loadbalancers.ListOpts{}).AllPages(ctx)
@@ -114,8 +138,8 @@ func ListAllLoadbalancers(ctx context.Context, exporter *BaseOpenStackExporter, 
 			prometheus.GaugeValue, float64(mapLoadbalancerStatus(loadbalancer.OperatingStatus)), loadbalancer.ID, loadbalancer.Name, loadbalancer.ProjectID,
 			loadbalancer.OperatingStatus, loadbalancer.ProvisioningStatus, loadbalancer.Provider, loadbalancer.VipAddress)
 
-		// Loadbalancer stats metrics (only if enabled)
-		if _, hasStatsMetrics := exporter.Metrics["stats_bytes_in"]; hasStatsMetrics {
+		// Loadbalancer stats metrics (only if at least one is enabled)
+		if hasAnyMetric(exporter, loadbalancerStatsMetrics) {
 			stats, err := loadbalancers.GetStats(ctx, exporter.ClientV2, loadbalancer.ID).Extract()
 			if err != nil {
 				exporter.logger.Warn("failed to get loadbalancer stats", "id", loadbalancer.ID, "error", err)
@@ -125,16 +149,11 @@ func ListAllLoadbalancers(ctx context.Context, exporter *BaseOpenStackExporter, 
 			labelValues := []string{loadbalancer.ID, loadbalancer.Name, loadbalancer.ProjectID,
 				loadbalancer.OperatingStatus, loadbalancer.ProvisioningStatus, loadbalancer.Provider, loadbalancer.VipAddress}
 
-			ch <- prometheus.MustNewConstMetric(exporter.Metrics["stats_bytes_in"].Metric,
-				prometheus.GaugeValue, float64(stats.BytesIn), labelValues...)
-			ch <- prometheus.MustNewConstMetric(exporter.Metrics["stats_bytes_out"].Metric,
-				prometheus.GaugeValue, float64(stats.BytesOut), labelValues...)
-			ch <- prometheus.MustNewConstMetric(exporter.Metrics["stats_active_connections"].Metric,
-				prometheus.GaugeValue, float64(stats.ActiveConnections), labelValues...)
-			ch <- prometheus.MustNewConstMetric(exporter.Metrics["stats_total_connections"].Metric,
-				prometheus.GaugeValue, float64(stats.TotalConnections), labelValues...)
-			ch <- prometheus.MustNewConstMetric(exporter.Metrics["stats_request_errors"].Metric,
-				prometheus.GaugeValue, float64(stats.RequestErrors), labelValues...)
+			emitStatMetric(exporter, ch, "stats_bytes_in", stats.BytesIn, labelValues)
+			emitStatMetric(exporter, ch, "stats_bytes_out", stats.BytesOut, labelValues)
+			emitStatMetric(exporter, ch, "stats_active_connections", stats.ActiveConnections, labelValues)
+			emitStatMetric(exporter, ch, "stats_total_connections", stats.TotalConnections, labelValues)
+			emitStatMetric(exporter, ch, "stats_request_errors", stats.RequestErrors, labelValues)
 		}
 	}
 	return nil
@@ -166,8 +185,8 @@ func ListAllListeners(ctx context.Context, exporter *BaseOpenStackExporter, ch c
 	ch <- prometheus.MustNewConstMetric(exporter.Metrics["total_listeners"].Metric,
 		prometheus.GaugeValue, float64(len(allListeners)))
 
-	// Listener stats metrics (only if enabled)
-	if _, hasStatsMetrics := exporter.Metrics["listener_stats_bytes_in"]; hasStatsMetrics {
+	// Listener stats metrics (only if at least one is enabled)
+	if hasAnyMetric(exporter, listenerStatsMetrics) {
 		for _, listener := range allListeners {
 			stats, err := listeners.GetStats(ctx, exporter.ClientV2, listener.ID).Extract()
 			if err != nil {
@@ -179,16 +198,11 @@ func ListAllListeners(ctx context.Context, exporter *BaseOpenStackExporter, ch c
 				listener.OperatingStatus, listener.ProvisioningStatus, listener.Protocol,
 				strconv.Itoa(listener.ProtocolPort), listenerLbsLabels(listener.Loadbalancers)}
 
-			ch <- prometheus.MustNewConstMetric(exporter.Metrics["listener_stats_bytes_in"].Metric,
-				prometheus.GaugeValue, float64(stats.BytesIn), labelValues...)
-			ch <- prometheus.MustNewConstMetric(exporter.Metrics["listener_stats_bytes_out"].Metric,
-				prometheus.GaugeValue, float64(stats.BytesOut), labelValues...)
-			ch <- prometheus.MustNewConstMetric(exporter.Metrics["listener_stats_active_connections"].Metric,
-				prometheus.GaugeValue, float64(stats.ActiveConnections), labelValues...)
-			ch <- prometheus.MustNewConstMetric(exporter.Metrics["listener_stats_total_connections"].Metric,
-				prometheus.GaugeValue, float64(stats.TotalConnections), labelValues...)
-			ch <- prometheus.MustNewConstMetric(exporter.Metrics["listener_stats_request_errors"].Metric,
-				prometheus.GaugeValue, float64(stats.RequestErrors), labelValues...)
+			emitStatMetric(exporter, ch, "listener_stats_bytes_in", stats.BytesIn, labelValues)
+			emitStatMetric(exporter, ch, "listener_stats_bytes_out", stats.BytesOut, labelValues)
+			emitStatMetric(exporter, ch, "listener_stats_active_connections", stats.ActiveConnections, labelValues)
+			emitStatMetric(exporter, ch, "listener_stats_total_connections", stats.TotalConnections, labelValues)
+			emitStatMetric(exporter, ch, "listener_stats_request_errors", stats.RequestErrors, labelValues)
 		}
 	}
 

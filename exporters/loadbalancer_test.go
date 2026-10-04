@@ -1,8 +1,12 @@
 package exporters
 
 import (
+	"log/slog"
+	"os"
 	"strings"
 
+	"github.com/jarcoal/httpmock"
+	"github.com/openstack-exporter/openstack-exporter/utils"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 )
@@ -73,4 +77,84 @@ openstack_loadbalancer_up 1
 func (suite *LoadbalancerTestSuite) TestLoadbalancerExporter() {
 	err := testutil.CollectAndCompare(*suite.Exporter, strings.NewReader(loadbalancerExpectedUp))
 	assert.NoError(suite.T(), err)
+}
+
+// newExporterWithDisabledMetrics rebuilds the exporter with the given
+// --disable-metric values, re-installing fixtures so mocked auth is fresh.
+func (suite *LoadbalancerTestSuite) newExporterWithDisabledMetrics(disabledMetrics []string) OpenStackExporter {
+	suite.teardownFixtures()
+	suite.installFixtures()
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
+	exporter, err := NewExporter(suite.ServiceName, suite.Prefix, cloudName, disabledMetrics, "public", false, false, false, false, "", "", new(utils.LabelMappingFlag), 10, func() (string, error) {
+		return DEFAULT_UUID, nil
+	}, logger)
+	suite.Require().NoError(err)
+	return exporter
+}
+
+// withoutMetrics drops the HELP, TYPE and sample lines of the given metrics
+// (names without the openstack_loadbalancer_ prefix) from expected output.
+func withoutMetrics(expected string, names ...string) string {
+	drop := map[string]bool{}
+	for _, name := range names {
+		drop["openstack_loadbalancer_"+name] = true
+	}
+
+	var kept []string
+	for _, line := range strings.Split(expected, "\n") {
+		fields := strings.Fields(line)
+		var metricName string
+		switch {
+		case len(fields) >= 3 && fields[0] == "#":
+			metricName = fields[2]
+		case len(fields) >= 1:
+			metricName, _, _ = strings.Cut(fields[0], "{")
+		}
+		if drop[metricName] {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+func (suite *LoadbalancerTestSuite) TestLoadbalancerExporterWithSingleStatsMetricDisabled() {
+	exporter := suite.newExporterWithDisabledMetrics([]string{
+		"loadbalancer-stats_bytes_out",
+		"loadbalancer-listener_stats_bytes_out",
+	})
+
+	expected := withoutMetrics(loadbalancerExpectedUp, "stats_bytes_out", "listener_stats_bytes_out")
+	err := testutil.CollectAndCompare(exporter, strings.NewReader(expected))
+	assert.NoError(suite.T(), err)
+}
+
+func (suite *LoadbalancerTestSuite) TestLoadbalancerExporterWithStatsBytesInDisabled() {
+	exporter := suite.newExporterWithDisabledMetrics([]string{
+		"loadbalancer-stats_bytes_in",
+		"loadbalancer-listener_stats_bytes_in",
+	})
+
+	expected := withoutMetrics(loadbalancerExpectedUp, "stats_bytes_in", "listener_stats_bytes_in")
+	err := testutil.CollectAndCompare(exporter, strings.NewReader(expected))
+	assert.NoError(suite.T(), err)
+}
+
+func (suite *LoadbalancerTestSuite) TestLoadbalancerExporterWithAllStatsMetricsDisabled() {
+	names := append(append([]string{}, loadbalancerStatsMetrics...), listenerStatsMetrics...)
+	disabled := make([]string, 0, len(names))
+	for _, name := range names {
+		disabled = append(disabled, "loadbalancer-"+name)
+	}
+	exporter := suite.newExporterWithDisabledMetrics(disabled)
+
+	expected := withoutMetrics(loadbalancerExpectedUp, names...)
+	err := testutil.CollectAndCompare(exporter, strings.NewReader(expected))
+	assert.NoError(suite.T(), err)
+
+	// No stats API calls should be made when every stats metric is disabled.
+	calls := httpmock.GetCallCountInfo()
+	assert.Zero(suite.T(), calls["GET "+suite.MakeURL("/loadbalancer/v2.0/lbaas/loadbalancers/607226db-27ef-4d41-ae89-f2a800e9c2db/stats", "")])
+	assert.Zero(suite.T(), calls["GET "+suite.MakeURL("/loadbalancer/v2.0/lbaas/listeners/023f2e34-7806-443b-bfae-16c324569a3d/stats", "")])
 }
